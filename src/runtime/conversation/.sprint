@@ -1,0 +1,3 @@
+sprint: 2
+status: not implemented yet
+note: Conversation Manager - multi-turn context management beyond the simple in-memory message array used in Sprint 1.

@@ -1,0 +1,3 @@
+sprint: 2
+status: not implemented yet
+note: Goal Evaluator - decides whether the goal was actually achieved (not just 'last tool call succeeded'). Sprint 1 has no explicit goal evaluation step.

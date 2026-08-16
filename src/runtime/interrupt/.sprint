@@ -1,0 +1,3 @@
+sprint: 3
+status: not implemented yet
+note: Interrupt Manager - soft cancel / tool cancel / hard stop across the three levels described in section 32.

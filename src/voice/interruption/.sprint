@@ -1,0 +1,3 @@
+sprint: 8
+status: not implemented yet
+note: Barge-in: stop TTS and interrupt presentation when user speech is detected (section 20).

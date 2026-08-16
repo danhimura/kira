@@ -1,0 +1,3 @@
+sprint: 3
+status: not implemented yet
+note: Policy Engine - deterministic ALLOW/DENY/REQUIRE_CONFIRMATION based on tool risk_level + user authorization. Sprint 1 uses a permissive stub (see runtime/executor) since only read-only tools are registered.

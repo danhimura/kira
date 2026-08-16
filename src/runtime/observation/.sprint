@@ -1,0 +1,3 @@
+sprint: 2
+status: not implemented yet
+note: Observation Manager - converts raw ToolResult into an Observation + StateDelta. Sprint 1 passes ToolResult straight to the LLM as the tool response.

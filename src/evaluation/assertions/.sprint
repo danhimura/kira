@@ -1,0 +1,3 @@
+sprint: 5
+status: not implemented yet
+note: Assertion helpers for tool sequence / state transitions / goal state checks.

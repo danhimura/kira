@@ -1,0 +1,3 @@
+sprint: 2
+status: not implemented yet
+note: Planner - produces a provisional multi-step plan and re-plans after each observation. Sprint 1 does single-shot tool selection via the LLM, no explicit plan object.

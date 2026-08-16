@@ -1,0 +1,3 @@
+sprint: 4
+status: not implemented yet
+note: execute_powershell / execute_python - destructive-risk tools; require the real Policy Engine (sprint 3) before being registered.

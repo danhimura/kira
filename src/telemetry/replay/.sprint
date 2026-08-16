@@ -1,0 +1,3 @@
+sprint: 5
+status: not implemented yet
+note: Reconstruct a full session from persisted trace events (section 27).

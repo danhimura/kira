@@ -1,0 +1,3 @@
+sprint: 5
+status: not implemented yet
+note: Aggregated metrics (token counts, tool durations, retries, timeouts) beyond the raw trace log.
