@@ -161,7 +161,7 @@ function launchAndDetectFailure(command: string, signal: AbortSignal, graceMs = 
 }
 
 const listInstalledAppsInput = z.object({
-  nameFilter: z.string().optional().describe("Case-insensitive substring to filter app names by."),
+  nameFilter: z.string().nullable().optional().describe("Case-insensitive substring to filter app names by."),
 });
 
 // Section 11/TC-VOICE-003 of docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md - when

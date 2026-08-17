@@ -45,7 +45,7 @@ const readFileTool: ToolDefinition<
 const searchFilesInput = z.object({
   directory: z.string().describe("Directory to search under."),
   pattern: z.string().describe("Case-insensitive substring to match against file names."),
-  maxDepth: z.number().int().min(0).max(10).optional(),
+  maxDepth: z.number().int().min(0).max(10).nullable().optional(),
 });
 
 function throwIfAborted(signal: AbortSignal): void {

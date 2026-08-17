@@ -6,7 +6,7 @@ import { structuredCall } from "../../llm/schemas/structuredCall.js";
 // wants, not *how* to get there.
 export const IntentSchema = z.object({
   goal: z.string().describe("Short imperative description of what the user wants achieved."),
-  target: z.string().optional().describe("The main subject/entity of the request, if any (e.g. an app name, a file, a topic)."),
+  target: z.string().nullable().optional().describe("The main subject/entity of the request, if any (e.g. an app name, a file, a topic)."),
   constraints: z.array(z.string()).describe("Any explicit constraints or conditions the user stated (empty array if none)."),
   requiresAction: z.boolean().describe("True if satisfying this goal requires calling a tool; false for pure conversation/small talk."),
 });

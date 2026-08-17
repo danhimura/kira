@@ -6,7 +6,7 @@ import type { ToolDefinition } from "../registry/ToolDefinition.js";
 const execFileAsync = promisify(execFile);
 
 const inputSchema = z.object({
-  nameFilter: z.string().optional().describe("Case-insensitive substring to filter process names by."),
+  nameFilter: z.string().nullable().optional().describe("Case-insensitive substring to filter process names by."),
 });
 
 interface ProcessInfo {

@@ -2,6 +2,7 @@ import type { EventBus } from "../runtime/events/EventBus.js";
 import { OmniVoiceClient } from "./tts/OmniVoiceClient.js";
 import { PcmPlayer } from "./playback/PcmPlayer.js";
 import { segmentIntoSentences } from "./tts/SentenceSegmenter.js";
+import { sanitizeForSpeech } from "./tts/SpeechSanitizer.js";
 import { computeRmsAmplitude16 } from "./tts/PcmAmplitude.js";
 
 export interface SpeechControllerOptions {
@@ -57,7 +58,7 @@ export class SpeechController {
   /** Speaks text sentence-by-sentence; stop() interrupts mid-utterance. Never throws - degrades to a logged warning. */
   async speak(text: string): Promise<void> {
     if (!this.enabled) return;
-    const segments = segmentIntoSentences(text);
+    const segments = segmentIntoSentences(sanitizeForSpeech(text));
     if (!segments.length) return;
 
     const controller = new AbortController();
