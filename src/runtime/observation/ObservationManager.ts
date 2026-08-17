@@ -44,6 +44,43 @@ const INTERPRETERS: Record<string, Interpreter> = {
       stateDelta: { lastSearchCount: d.count },
     };
   },
+  open_folder: (r) => {
+    const d = r.data as { opened: string };
+    return { summary: `Pasta aberta no explorador: ${d.opened}.`, stateDelta: { lastOpenedFolder: d.opened } };
+  },
+  open_application: (r) => {
+    const d = r.data as { launched: string; pid?: number };
+    return {
+      summary: `Aplicativo iniciado: ${d.launched}${d.pid ? ` (PID ${d.pid})` : ""}.`,
+      stateDelta: { lastLaunchedApp: d.launched },
+    };
+  },
+  close_application: (r) => {
+    const d = r.data as { closed: string };
+    return { summary: `Processo(s) "${d.closed}" encerrado(s) normalmente.`, stateDelta: {} };
+  },
+  open_url: (r) => {
+    const d = r.data as { opened: string };
+    return { summary: `URL aberta no navegador padrão: ${d.opened}.`, stateDelta: { lastOpenedUrl: d.opened } };
+  },
+  focus_window: (r) => {
+    const d = r.data as { focused: string };
+    return { summary: `Janela contendo "${d.focused}" trazida para o primeiro plano.`, stateDelta: {} };
+  },
+  create_file: (r) => {
+    const d = r.data as { path: string; bytesWritten: number };
+    return {
+      summary: `Arquivo criado: ${d.path} (${d.bytesWritten} bytes).`,
+      stateDelta: { lastCreatedFile: d.path },
+    };
+  },
+  write_file: (r) => {
+    const d = r.data as { path: string; mode: string; bytesWritten: number };
+    return {
+      summary: `Arquivo escrito (${d.mode}): ${d.path} (${d.bytesWritten} bytes).`,
+      stateDelta: { lastWrittenFile: d.path },
+    };
+  },
 };
 
 /**

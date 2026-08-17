@@ -5,9 +5,10 @@ architecture in the project specification: **the LLM proposes, the runtime
 decides, the policy authorizes, the tool executes, the observation verifies,
 the evaluator judges the goal, and TTS/avatar communicate state.**
 
-This repo currently implements **Sprints 1–3** of the phased plan
+This repo currently implements **Sprints 1–4** of the phased plan
 (section 39 of the spec): a real `goal → plan → action → observation →
-evaluate → replan` loop, now with real authorization —
+evaluate → replan` loop, real authorization, and a growing set of tools
+that actually act on the machine —
 
 ```
 goal → action → observation → replan
@@ -17,10 +18,12 @@ with a real Session Manager, Intent Processor, Planner, Tool Registry/
 Executor, Observation Manager, Goal Evaluator, Conversation Manager, Policy
 Engine, Interrupt Manager, Event Bus, and a persisted Trace. **The LLM has no
 direct authority: every tool call is judged by the deterministic Policy
-Engine before it runs** (section 39's Sprint 3 goal). Everything else in the
-architecture (destructive tools, voice, avatar, evaluation harness) is
-scaffolded as a stub folder with a `.sprint` file describing what belongs
-there and which sprint fills it in — see the folder tree below.
+Engine before it runs** (section 39's Sprint 3 goal), and Sprint 4 adds real
+reversible/persistent tools behind that same gate — "agente executando
+tarefas reais." Everything else in the architecture (destructive tools,
+browser automation, voice, avatar, evaluation harness) is scaffolded as a
+stub folder with a `.sprint` file describing what belongs there and which
+sprint fills it in — see the folder tree below.
 
 ## Requirements
 
@@ -49,7 +52,7 @@ Type "sair" or "exit" to end the session. **Ctrl+C** cancels whatever turn
 is currently running (soft cancel); a second Ctrl+C (or one with nothing
 running) exits the program (hard stop).
 
-## What Sprints 1–3 actually do
+## What Sprints 1–4 actually do
 
 1. `SessionManager` creates a session (`session_id`) and, per user message, a
    turn (`turn_id`, `trace_id`, `parent_trace_id` linking back to the
@@ -133,14 +136,37 @@ running) exits the program (hard stop).
 | `read_file` | `read_only` | none |
 | `search_files` | `read_only` | none |
 | `open_folder` | `reversible` | required (once per session) |
+| `open_application` | `reversible` | required (once per session) |
+| `close_application` | `reversible` | required (once per session) |
+| `open_url` | `reversible` | required (once per session) |
+| `focus_window` | `reversible` | required (once per session) |
+| `create_file` | `persistent` | required (once per session) |
+| `write_file` | `persistent` | required (once per session) |
 
-`open_folder` (opens Windows Explorer at a path) was added specifically to
-give the Sprint 3 Policy Engine something concrete to gate — a real
-`reversible`-risk action, per section 11.2. Genuinely `persistent`/
-`destructive` tools stay Sprint 4, once there's more to say about them than
-"the same confirmation gate, every time."
+Sprint 4 adds the section 11.2 reversible tools and the first section 11.3
+persistent ones, all behind the same Policy Engine gate built in Sprint 3:
+- `open_application` launches a command (PATH-resolved name or absolute
+  path) and distinguishes a real launch from "command not found" with a
+  short grace period + exit-code/stderr check — it doesn't just fire-and-
+  forget and assume success.
+- `close_application` uses `taskkill` **without** `/F` — a deliberately
+  graceful-only close. If a process won't close gracefully, that's a
+  genuine `FAILURE`, not silently escalated to a force-kill (that's
+  `kill_process`, a `destructive` tool, staying out of scope for now).
+- `open_url` restricts to `http(s)` and passes the URL as a discrete argv
+  element (not a concatenated shell string) to avoid injection.
+- `focus_window` shells out to PowerShell's `WScript.Shell.AppActivate`
+  (matched by window-title substring), with the user's input escaped as a
+  single-quoted PS string literal, never interpolated as code.
+- `create_file` uses the `"wx"` flag — it fails with `EEXIST` rather than
+  silently overwriting; `write_file` is the explicit overwrite/append tool.
 
-Verified manually against a running Ollama instance:
+Genuinely `destructive` tools (`delete_file`, `execute_powershell`,
+`kill_process`) stay out of this round, since they need more than "the same
+confirmation gate, every time" to be trustworthy.
+
+Verified manually against a running Ollama instance and via focused
+standalone scripts (bypassing the LLM for deterministic coverage):
 - **Goal Evaluator verdicts** — `COMPLETE` (datetime + hostname query);
   `FAIL` (a `search_files` timeout retried automatically, still `UNKNOWN`,
   correctly reported as "insufficient evidence" rather than a guess; a
@@ -148,8 +174,8 @@ Verified manually against a running Ollama instance:
   inventing content, R5); `ASK_USER` ("read the config file", no path given,
   followed by a correct continuation from `LISTENING` on the next turn with
   no state-machine error).
-- **Policy Engine** — `open_folder` correctly required confirmation;
-  accepting it (`s`) ran the tool and reported success; declining it (`n`)
+- **Policy Engine** — `open_folder`/`open_application`/etc. correctly
+  required confirmation; accepting (`s`) ran the tool, declining (`n`)
   produced a clean `CONFIRMATION_DENIED` failure without running anything;
   a second request for the same tool in one session was auto-allowed from
   `session.approvedTools` without re-prompting.
@@ -158,6 +184,16 @@ Verified manually against a running Ollama instance:
   (`CANCELLED`, no execution); cancelling *while* a cancellable tool is
   running aborts it promptly (~300ms into a simulated 5s operation) instead
   of waiting it out.
+- **New Sprint 4 tools, end to end**: `open_application("XyzNaoExiste999")`
+  failed fast and clearly (not a false success); `open_application("notepad")`
+  launched it (verified via `list_processes`); `close_application` closed it
+  gracefully; `focus_window("notepad")` correctly *failed* (this machine's
+  PT-BR Windows names the window "Bloco de Notas", not "notepad" —
+  a real substring miss, not a bug) while `focus_window("Bloco de Notas")`
+  correctly succeeded; `create_file` → `create_file` again on the same path
+  correctly refused (`EEXIST`) → `write_file(mode: "append")` → `read_file`
+  round-tripped exactly to the expected `"hello world"`; `open_url` opened a
+  real page in the default browser.
 
 ## Project layout
 
@@ -182,9 +218,14 @@ src/
 │   └── prompts/          system prompt (done)
 ├── tools/
 │   ├── registry/         ToolDefinition contract + ToolRegistry (done)
-│   ├── windows/, process/, filesystem/  tools incl. open_folder (done)
-│   ├── browser/          .sprint — Sprint 4
-│   └── terminal/         .sprint — Sprint 4 (destructive tools)
+│   ├── windows/          get_datetime, get_system_information, open_folder,
+│   │                     open_application, close_application, open_url,
+│   │                     focus_window (done)
+│   ├── process/          list_processes (done)
+│   ├── filesystem/       read_file, search_files, create_file, write_file (done)
+│   ├── browser/          .sprint — Sprint 4 (browser automation)
+│   └── terminal/         .sprint — Sprint 4/5 (destructive: delete_file,
+│                         execute_powershell, kill_process)
 ├── telemetry/
 │   ├── tracing/          Trace (done)
 │   ├── metrics/          .sprint — Sprint 5
@@ -211,8 +252,11 @@ storage/                  SQLite database file lives here (gitignored)
 
 ## Next steps (per the spec's Sprint order)
 
-- **Sprint 4** — reversible/persistent/destructive tools proper (apps,
-  files, browser, PowerShell) gated by the Policy Engine built in Sprint 3.
+- **Sprint 4 (remainder)** — browser automation (DOM/accessibility-tree
+  first, per section 35) and `destructive`-risk tools (`delete_file`,
+  `execute_powershell`, `kill_process`) — these need more thought than the
+  reversible/persistent tools got, since the Policy Engine always requires
+  confirmation for them but there's no undo.
 - **Sprint 5** — Evaluation Harness (PASS/FAIL/NOT_APPLICABLE cases,
   including the negative cases in section 30).
 - **Sprint 6** — integrate the existing local TTS.

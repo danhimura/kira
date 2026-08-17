@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ToolDefinition } from "../registry/ToolDefinition.js";
 
@@ -105,4 +105,61 @@ const searchFilesTool: ToolDefinition<
   },
 };
 
-export const filesystemTools = [readFileTool, searchFilesTool];
+const createFileInput = z.object({
+  path: z.string().describe("Path of the new file to create."),
+  content: z.string().describe("Text content to write to the new file."),
+});
+
+// Section 11.3 - persistent, but deliberately additive-only: the "wx" flag
+// fails with EEXIST rather than silently overwriting. Use write_file for
+// overwriting an existing file.
+const createFileTool: ToolDefinition<z.infer<typeof createFileInput>, { path: string; bytesWritten: number }> = {
+  name: "create_file",
+  version: "1.0.0",
+  description: "Creates a new text file with the given content. Fails if the file already exists - use write_file to overwrite.",
+  inputSchema: createFileInput,
+  riskLevel: "persistent",
+  permissions: ["filesystem:write"],
+  timeoutMs: 5_000,
+  cancellable: false,
+  idempotency: "no",
+  sideEffects: "persistent",
+  confirmationPolicy: "risk_based",
+  environment: "cross-platform",
+  async execute({ path, content }) {
+    const absolutePath = resolve(path);
+    await writeFile(absolutePath, content, { flag: "wx" });
+    return { path: absolutePath, bytesWritten: Buffer.byteLength(content, "utf-8") };
+  },
+};
+
+const writeFileInput = z.object({
+  path: z.string().describe("Path of the file to write."),
+  content: z.string().describe("Text content to write."),
+  mode: z.enum(["overwrite", "append"]).describe("Whether to replace the file's existing contents or append to them."),
+});
+
+const writeFileTool: ToolDefinition<
+  z.infer<typeof writeFileInput>,
+  { path: string; mode: string; bytesWritten: number }
+> = {
+  name: "write_file",
+  version: "1.0.0",
+  description: "Writes text content to a file (overwrite or append) - creates the file first if it doesn't exist.",
+  inputSchema: writeFileInput,
+  riskLevel: "persistent",
+  permissions: ["filesystem:write"],
+  timeoutMs: 5_000,
+  cancellable: false,
+  idempotency: "depends",
+  sideEffects: "persistent",
+  confirmationPolicy: "risk_based",
+  environment: "cross-platform",
+  async execute({ path, content, mode }) {
+    const absolutePath = resolve(path);
+    await writeFile(absolutePath, content, { flag: mode === "append" ? "a" : "w" });
+    return { path: absolutePath, mode, bytesWritten: Buffer.byteLength(content, "utf-8") };
+  },
+};
+
+export const filesystemTools = [readFileTool, searchFilesTool, createFileTool, writeFileTool];
