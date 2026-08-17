@@ -9,6 +9,8 @@ export interface SessionLimits {
   maxSameToolRetries: number;
   /** Wall-clock budget for a single turn. */
   maxExecutionTimeMs: number;
+  /** Max characters of a single tool result serialized back into conversation history (large payloads like search_files' 200 paths would otherwise blow the LLM's context window). */
+  maxToolResultChars: number;
 }
 
 export const DEFAULT_LIMITS: SessionLimits = {
@@ -16,4 +18,5 @@ export const DEFAULT_LIMITS: SessionLimits = {
   maxToolCalls: 8,
   maxSameToolRetries: 2,
   maxExecutionTimeMs: 60_000,
+  maxToolResultChars: 2_000,
 };

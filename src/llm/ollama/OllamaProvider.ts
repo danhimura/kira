@@ -12,7 +12,11 @@ interface OllamaChatResponse {
 export interface OllamaProviderOptions {
   host?: string;
   model: string;
+  /** Context window (tokens) requested per call. Ollama defaults to 4096 if unset, which our tool schemas + conversation history can exceed. */
+  numCtx?: number;
 }
+
+const DEFAULT_NUM_CTX = 16_384;
 
 /**
  * OLLAMA_HOST is commonly set as a bind address ("0.0.0.0:11434", no scheme)
@@ -31,10 +35,12 @@ function normalizeHost(host: string): string {
 export class OllamaProvider implements LLMProvider {
   private readonly host: string;
   private readonly model: string;
+  private readonly numCtx: number;
 
   constructor(options: OllamaProviderOptions) {
     this.host = normalizeHost(options.host ?? "http://localhost:11434");
     this.model = options.model;
+    this.numCtx = options.numCtx ?? DEFAULT_NUM_CTX;
   }
 
   async chat(messages: ChatMessage[], tools: ToolSpec[]): Promise<LLMChatResult> {
@@ -44,6 +50,7 @@ export class OllamaProvider implements LLMProvider {
       body: JSON.stringify({
         model: this.model,
         stream: false,
+        options: { num_ctx: this.numCtx },
         messages: messages.map((m) => ({
           role: m.role,
           content: m.content,

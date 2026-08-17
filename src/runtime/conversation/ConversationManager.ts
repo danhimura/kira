@@ -31,3 +31,17 @@ export class ConversationManager {
     history.splice(0, history.length - this.maxMessages);
   }
 }
+
+/**
+ * Section 31's max_context, applied per tool result: a broad search_files or
+ * list_processes call can return hundreds of entries, and serializing that
+ * verbatim into conversation history is what blew Ollama's context window in
+ * practice. The Observation Manager's summary (not this raw JSON) is what
+ * the Goal Evaluator actually reasons from, so truncating here is safe.
+ */
+export function truncateToolResult(toolResult: unknown, maxChars: number): string {
+  const full = JSON.stringify(toolResult);
+  if (full.length <= maxChars) return full;
+  const omitted = full.length - maxChars;
+  return `${full.slice(0, maxChars)}... [truncado - ${omitted} caracteres omitidos; o resumo já processado está disponível na observação]`;
+}

@@ -17,9 +17,14 @@ function isAbortError(err: unknown): boolean {
  * Section 9/13 - the only path from a tool_request to an actual Windows-level
  * effect. Schema validation happens here in code (R3). Risk authorization
  * (ALLOW/DENY/REQUIRE_CONFIRMATION) is decided by the caller's PolicyEngine
- * *before* run() is invoked (see main.ts) - this executor trusts that
- * decision and focuses purely on mechanical execution, timeout, and
+ * *before* run() is invoked (see AgentRuntime.ts) - this executor trusts
+ * that decision and focuses purely on mechanical execution, timeout, and
  * cancellation (section 32).
+ *
+ * Note: "tool.requested" / TOOL_REQUEST (section 18) is recorded by the
+ * caller as soon as the LLM proposes a call, before any policy decision -
+ * it reflects what was *proposed*, not what was actually executed. run()
+ * and reject() below only ever record what happens *after* that point.
  */
 export class ToolExecutor {
   constructor(
@@ -33,9 +38,6 @@ export class ToolExecutor {
     const startedAt = Date.now();
     const emit = (name: Parameters<EventBus["emit"]>[0], data: unknown) =>
       this.events.emit(name, this.sessionId, data);
-
-    emit("tool.requested", { tool: toolName, executionId, args: rawArgs });
-    trace.record("TOOL_REQUEST", { tool: toolName, args: rawArgs });
 
     const tool = this.registry.get(toolName);
     if (!tool) {

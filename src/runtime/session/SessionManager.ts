@@ -70,7 +70,8 @@ export class SessionManager {
       )
       .run(id, session.id, traceId, parentTraceId ?? null, inputText, startedAt);
 
-    session.stateMachine.bindTurn(id, traceId);
+    const trace = new Trace(session.id, id, traceId);
+    session.stateMachine.bindTurn(id, traceId, trace);
 
     return {
       id,
@@ -78,7 +79,7 @@ export class SessionManager {
       parentTraceId,
       inputText,
       startedAt,
-      trace: new Trace(session.id, id, traceId),
+      trace,
     };
   }
 

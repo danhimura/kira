@@ -1,4 +1,5 @@
 import { EventBus } from "../events/EventBus.js";
+import type { Trace } from "../../telemetry/tracing/Trace.js";
 
 // Section 16: the agent runtime state machine. Transitions are validated in
 // code (R3 - determinism outside of reasoning), never decided by the LLM.
@@ -57,7 +58,8 @@ export class AgentStateMachine {
     private readonly sessionId: string,
     private readonly events: EventBus,
     private turnId?: string,
-    private traceId?: string
+    private traceId?: string,
+    private trace?: Trace
   ) {}
 
   get current(): AgentState {
@@ -68,9 +70,11 @@ export class AgentStateMachine {
     return TERMINAL_STATES.has(this.state);
   }
 
-  bindTurn(turnId: string, traceId: string): void {
+  /** Trace is optional so a bare, trace-less state machine can still be used in isolation (e.g. unit tests). */
+  bindTurn(turnId: string, traceId: string, trace?: Trace): void {
     this.turnId = turnId;
     this.traceId = traceId;
+    this.trace = trace;
   }
 
   transition(to: AgentState): AgentState {
@@ -80,6 +84,10 @@ export class AgentStateMachine {
     }
     const from = this.state;
     this.state = to;
+    // Persisted alongside the rest of the turn's trace (section 27 replay,
+    // section 28 evaluation-harness expected_state_transitions) - not just
+    // the ephemeral EventBus emission below.
+    this.trace?.record("STATE_CHANGED", { from, to });
     this.events.emit(
       "agent.state.changed",
       this.sessionId,
