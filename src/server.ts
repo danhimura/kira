@@ -14,7 +14,7 @@ const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "gemma4:e4b";
 const VOICE_ENABLED = process.env.AYMI_VOICE !== "0";
 const OMNIVOICE_BASE_URL = process.env.OMNIVOICE_BASE_URL ?? "http://localhost:8765";
-const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "auto";
+const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "nova";
 // Sprint 8 (docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md) - off by default since
 // it needs a working microphone and the vendored whisper.cpp build/models;
 // AYMI_MIC_DEVICE overrides the dshow device name (see `ffmpeg -list_devices

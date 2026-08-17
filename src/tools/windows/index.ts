@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ToolDefinition } from "../registry/ToolDefinition.js";
+import { listInstalledApps as listInstalledAppsFromStartMenu } from "./InstalledApps.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -159,6 +160,40 @@ function launchAndDetectFailure(command: string, signal: AbortSignal, graceMs = 
   });
 }
 
+const listInstalledAppsInput = z.object({
+  nameFilter: z.string().optional().describe("Case-insensitive substring to filter app names by."),
+});
+
+// Section 11/TC-VOICE-003 of docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md - when
+// voice input mis-transcribes an app name ("Chrome" heard as "cron"/"cromi"),
+// resolving that is the Agent Runtime's job, not the voice module's, and not
+// a hardcoded synonym table either (doesn't scale, and plain character edit
+// distance actively picks the *wrong* app - "cron" is spelling-closer to
+// "Cross" than to "Chrome" despite sounding like it). The LLM itself is
+// better at this kind of phonetic/spelling judgment call than a hand-rolled
+// distance metric, so it just gets the real installed-app list to reason
+// over instead.
+const listInstalledApps: ToolDefinition<z.infer<typeof listInstalledAppsInput>, { count: number; apps: { name: string; path: string }[] }> = {
+  name: "list_installed_apps",
+  version: "1.0.0",
+  description:
+    "Lists applications actually installed on this machine (from Start Menu shortcuts), with the exact executable path to pass to open_application. Use this before open_application whenever the target name might be a phonetic mis-transcription from voice input (e.g. 'cron' or 'cromi' likely meant 'Chrome') or you're otherwise unsure of the exact name.",
+  inputSchema: listInstalledAppsInput,
+  riskLevel: "read_only",
+  permissions: [],
+  timeoutMs: 5_000,
+  cancellable: false,
+  idempotency: "no",
+  sideEffects: "none",
+  confirmationPolicy: "none",
+  environment: "windows",
+  async execute({ nameFilter }) {
+    const all = await listInstalledAppsFromStartMenu();
+    const filtered = nameFilter ? all.filter((a) => a.name.toLowerCase().includes(nameFilter.toLowerCase())) : all;
+    return { count: filtered.length, apps: filtered.slice(0, 150) };
+  },
+};
+
 const openApplicationInput = z.object({
   target: z.string().describe("Executable name resolvable via PATH (e.g. 'notepad', 'calc') or an absolute path to an .exe."),
 });
@@ -166,7 +201,8 @@ const openApplicationInput = z.object({
 const openApplication: ToolDefinition<z.infer<typeof openApplicationInput>, { launched: string; pid?: number }> = {
   name: "open_application",
   version: "1.0.0",
-  description: "Launches an application by executable name (resolved via PATH) or absolute path.",
+  description:
+    "Launches an application by executable name (resolved via PATH) or absolute path. If unsure of the exact name (especially for voice-transcribed input, which can mis-hear app names phonetically), call list_installed_apps first.",
   inputSchema: openApplicationInput,
   riskLevel: "reversible",
   permissions: ["process:spawn"],
@@ -268,6 +304,7 @@ export const windowsTools = [
   getDatetime,
   getSystemInformation,
   openFolder,
+  listInstalledApps,
   openApplication,
   closeApplication,
   openUrl,

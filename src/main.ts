@@ -9,7 +9,7 @@ const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "gemma4:e4b";
 const VOICE_ENABLED = process.env.AYMI_VOICE !== "0";
 const OMNIVOICE_BASE_URL = process.env.OMNIVOICE_BASE_URL ?? "http://localhost:8765";
-const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "auto";
+const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "nova";
 
 const runtime = createAgentRuntime({ ollamaHost: OLLAMA_HOST, ollamaModel: OLLAMA_MODEL });
 

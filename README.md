@@ -252,6 +252,28 @@ you want those to actually complete instead of hanging.
   sensibly ("Kira, abriu crômi" → `ASK_USER: Você quis dizer o Google
   Chrome? Posso tentar abri-lo para você.` - exactly TC-VOICE-003's
   intent, with zero Chrome-specific code in the voice module).
+- **"Kira, abre o Chrome" (TC-VOICE-001) fully closed the loop**: the STT
+  never transcribes "Chrome" correctly in a pt-BR sentence ("cron", "cromi",
+  "crome", "cronca" - all different takes of the same word), and a
+  character-edit-distance fuzzy match against installed app names actively
+  picked the *wrong* app ("cron" is spelling-closer to "Cross Tools
+  Command Prompt" than to "Chrome", despite sounding like it - phonetic
+  similarity isn't spelling similarity). Fixed properly: a new
+  `list_installed_apps` tool (`InstalledApps.ts`, enumerating real Start
+  Menu shortcuts - no hardcoded app list) lets the *LLM itself* resolve the
+  mis-transcription, since it's better at "sounds like X" judgment calls
+  than a hand-rolled distance metric. Confirmed live: `open_application`
+  was called with the correct `chrome.exe` path, the confirmation dialog
+  appeared, Chrome launched on approval - only the turn's *last* step
+  (GoalEvaluator) separately hit Groq's free-tier rate limit (8000 TPM,
+  easy to hit with `list_installed_apps`' ~150-app payload in context) and
+  reported the turn as FAILED even though the actual requested action had
+  already succeeded - a reporting quirk, not a functional one.
+- **Voice identity**: OmniVoice's default (`voice: "auto"`) is male - Kira
+  is a female character, so the default is now the `nova` preset (female,
+  young adult) instead. `OMNIVOICE_VOICE` still overrides it; see
+  `/v1/voices` on the OmniVoice server for the full preset list plus
+  `design:<attributes>` for custom voice design.
 - Not done: barge-in (spec section 15 - voice-detected interruption of
   Kira's own speech; typed-message barge-in already works, see
   `SpeechController`), telemetry fields (section 19), a dedicated

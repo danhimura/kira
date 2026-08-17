@@ -24,7 +24,7 @@ export const KIRA_PROFILE: VoiceProfile = {
   wakeWordAliases: ["kira", "quira", "kyra", "chira", "cira"],
   language: "pt",
   ttsProvider: "omnivoice",
-  ttsVoice: "auto",
+  ttsVoice: "nova",
   sttProvider: "whisper-ffmpeg",
   sttModel: "small",
 };
