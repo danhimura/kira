@@ -15,6 +15,9 @@ body,
 }
 
 body {
-  background: #0b1220;
+  /* Transparent by default so the Tauri overlay window's transparency
+     actually shows through; App.css's .app--config paints its own
+     opaque background when the full chat UI is visible. */
+  background: transparent;
   color: #e2e8f0;
 }

@@ -1,0 +1,25 @@
+.overlay-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 1.25rem;
+  border-bottom: 1px solid #334155;
+  background: #0f172a;
+  font-size: 0.85rem;
+}
+
+.overlay-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.overlay-settings-monitors button {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.overlay-settings-hint {
+  color: #64748b;
+  font-size: 0.75rem;
+}

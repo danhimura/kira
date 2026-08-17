@@ -5,12 +5,44 @@
   width: 100vw;
 }
 
+/* Desktop Avatar Overlay: click-through, no chrome, no backgrounds -
+   only the avatar art itself should be opaque. The Tauri window is
+   configured transparent; this variant is what makes that visible
+   instead of being painted over by an opaque page background. */
+.app--overlay {
+  background: transparent;
+}
+
+.app--overlay .app-body {
+  background: transparent;
+}
+
+.app--overlay .avatar-pane {
+  flex: 1;
+  border-right: none;
+  background: transparent;
+}
+
+/* The overlay is meant to be just the character floating over the desktop -
+   the colored aura ring (state feedback) belongs to the interactive config
+   view, not the ambient click-through one. */
+.app--overlay .avatar-aura {
+  display: none;
+}
+
+/* Config mode: window is interactive (drag/resize/chat), so it looks
+   like the original opaque chat panel. */
+.app--config {
+  background: #0b1220;
+}
+
 .app-header {
   padding: 0.75rem 1.25rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   border-bottom: 1px solid #334155;
   background: #0f172a;
+  cursor: move;
 }
 
 .app-body {
