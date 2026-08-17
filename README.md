@@ -126,6 +126,105 @@ Audio still plays on the host machine via `ffplay`/OmniVoice, same as the
 CLI; the browser never receives audio bytes, only the *events* (including
 PCM amplitude for lip sync).
 
+### Running as a Desktop Avatar Overlay (Tauri)
+
+The browser front end above runs in an ordinary browser tab - useful for
+quick iteration, but it can't be transparent, click-through, always-on-top,
+or placed on a specific monitor, because a browser tab isn't a native
+window. `ui/src-tauri/` wraps the same React app in a real Tauri 2 desktop
+window that can do all of that, without changing `AgentRuntime`,
+`server.ts`, the WS protocol, `PresentationStateMachine`, or
+`AnimationController` - the overlay is still just another presentation
+consumer of the same runtime.
+
+```bash
+npm run server         # backend: same WebSocket bridge as above, :8787
+cd ui && npx tauri dev  # native overlay window instead of a browser tab
+```
+
+- **Two modes, toggled with `Ctrl+Shift+A`, no restart:** overlay mode
+  (default) is transparent, borderless, always-on-top, and click-through -
+  mouse input passes through to whatever is behind it. Config mode makes
+  the window interactive: the full chat UI (header/status/chat input)
+  appears, the header can be dragged to move the window, and a small
+  settings panel exposes an always-on-top toggle and (with 2+ monitors) a
+  button per monitor to move the window there.
+- **Persistence**: position, size, and always-on-top are saved to
+  `localStorage` on every move/resize and restored on the next launch
+  (`ui/src/overlay/OverlaySettingsStore.ts`).
+- **Outside Tauri** (e.g. opening `http://localhost:5173` directly in a
+  browser, as used for Browser-pane verification during development),
+  `useOverlay()`'s Tauri calls are no-ops and the full chat UI always
+  renders - the existing browser-based testing workflow is unaffected.
+- **Known limitation**: there's no dedicated resize/scale control yet -
+  since `decorations: false` removes the native resize border, resizing
+  currently relies on whatever the OS/window manager allows programmatically;
+  a scale slider in `OverlaySettingsPanel` would be the natural next step.
+- Files: `ui/src-tauri/` (Rust shell: window config in `tauri.conf.json`,
+  the `Ctrl+Shift+A` global-shortcut toggle in `src/lib.rs`),
+  `ui/src/overlay/` (`useOverlay.ts`, `OverlaySettingsStore.ts`,
+  `tauriEnv.ts`), `ui/src/components/OverlaySettingsPanel.tsx`.
+
+### Running voice input (Sprint 8, per `docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md`)
+
+Off by default - needs a working microphone and the vendored whisper.cpp
+build (see that spec doc's own section for the full design; this is a
+quick-start plus what's actually been verified with real speech).
+
+```bash
+AYMI_VOICE_INPUT=1 npm run server   # AYMI_MIC_DEVICE overrides the mic (see below)
+```
+
+Say `"Kira, <comando>"` - e.g. **"Kira, que horas são?"** - out loud near the
+mic. `AgentRuntime` processes it exactly like typed/WS text (same
+`handleInput()`), so anything that requires confirmation (most action
+tools - `open_application`, `write_file`, etc.) will sit waiting for an
+approval that only a connected UI (the Tauri overlay or the browser front
+end) can give, same as it already does for typed input - have one open if
+you want those to actually complete instead of hanging.
+
+- Find your mic's exact device name with:
+  `ffmpeg -list_devices true -f dshow -i dummy` (look for the `(audio)`
+  entries), then set `AYMI_MIC_DEVICE="Exact Name"` if it's not
+  `"Microfone (G733 Gaming Headset)"` (this machine's default).
+- STT model: `AYMI_WHISPER_MODEL` overrides the path (default
+  `vendor/whisper.cpp/models/ggml-small.bin`). The smaller `ggml-base.bin`
+  was tried first and hallucinated too much on real speech ("Kira, que
+  horas são?" came out as "que oração") - `small` fixed that for plain
+  Portuguese but still occasionally mangles English loanwords like
+  "Chrome" ("crômi", "cronca") - an inherent STT limitation, not a pipeline
+  bug (see the wake-word note below and TC-VOICE-003 in the spec, which
+  explicitly expects the *Agent Runtime* to absorb this kind of noise, not
+  the voice module).
+- **Verified live**, in order: mic capture + VAD + transcription (this
+  machine's `ffmpeg` build has `--enable-whisper`, so one persistent
+  `ffmpeg -f dshow ... -af whisper=...:vad_model=...` process does capture,
+  VAD, and transcription together - see `WhisperFfmpegSTT.ts`); wake-word
+  detection (fuzzy-matched by edit distance in `WakeWord.ts`, since pt-BR
+  Whisper output renders "Kira" inconsistently - "Quira", "Queira", "Cira"
+  were all observed live - an exact-match alias list turned into
+  whack-a-mole, so it's Levenshtein distance ≤1 against a short seed list
+  instead); command forwarding into the exact same turn pipeline as typed
+  input; and the Agent Runtime handling a good transcription correctly
+  ("Kira, que horas são?" → `SUCCESS: São 11:31:55...`) *and* a bad one
+  sensibly ("Kira, abriu crômi" → `ASK_USER: Você quis dizer o Google
+  Chrome? Posso tentar abri-lo para você.` - exactly TC-VOICE-003's
+  intent, with zero Chrome-specific code in the voice module).
+- Not done: barge-in (spec section 15 - voice-detected interruption of
+  Kira's own speech; typed-message barge-in already works, see
+  `SpeechController`), telemetry fields (section 19), a dedicated
+  wake-word engine (this is still "Modo A" per section 8 - continuous STT,
+  just with real VAD baked in rather than the bare minimum that section
+  describes), voice-based confirmation ("sim"/"pode" per section 21 - right
+  now only a connected UI's confirm button works), and the `TTSProvider`
+  abstraction (sections 3-4 - `SpeechController` still calls
+  `OmniVoiceClient` directly; low priority since `AgentRuntime` already
+  never imports voice/TTS code at all).
+- Files: `src/voice/profiles/VoiceProfile.ts` (`KIRA_PROFILE`),
+  `src/voice/stt/STTProvider.ts` + `WhisperFfmpegSTT.ts`,
+  `src/voice/input/WakeWord.ts`, `src/voice/VoiceRuntime.ts` (the section 9
+  state machine), wired into `server.ts` behind `AYMI_VOICE_INPUT`.
+
 ## What Sprints 1–7 actually do
 
 1. `SessionManager` creates a session (`session_id`) and, per user message, a
@@ -438,18 +537,21 @@ Two real bugs surfaced and fixed while testing this, not papered over:
   works fine) - clicking the actual submit button was the reliable signal,
   and is what the verification below relies on.
 
-**Known open decision, not yet resolved**: the spec's target is an anime
-character avatar overlay (Live2D or equivalent) - `Avatar.tsx` right now is
-a procedural SVG placeholder that proves the state → expression → render
-pipeline works, not the intended final visual. Producing original anime
-artwork isn't something this tooling can do; the options are (a) a real
-Live2D Cubism Web SDK integration using one of Live2D Inc.'s free official
-sample models as a placeholder, (b) the user supplying a real model file
-later (`.model3.json` + textures) for the same integration, or (c) a
-simpler static-sprite swap system if illustrated frames become available.
-Whichever is chosen, only `Avatar.tsx`'s internals change - `PresentationStateMachine`,
-`AnimationController`, and the `{ expression, mouthOpenness, blinking }`
-contract all stay the same.
+**Avatar art (partially resolved)**: the user supplied real character
+artwork (`ui/src/assets/modelo_base.png`), replacing the procedural SVG
+placeholder. It's a single static illustration, not a rigged Live2D model
+(no separate hair/eye/mouth layers), so `Avatar.tsx` conveys state through
+the same `AnimationController` output applied to the image as a whole - a
+colored aura ring per expression, breathing, a speech-amplitude scale
+pulse, shake/flash/pop for error/success/surprised, and a brightness dip
+for blinking - rather than swapping facial features or animating a rig.
+Verified live: the aura correctly turns green with the real artwork during
+TTS playback, same as it did with the placeholder. Getting an actual
+rigged Live2D character (moving hair, blinking eyes, lip-flap synced to
+phonemes) would need either more art from the user (separate layers/poses)
+or a proper Live2D Cubism pipeline built around this same art - the
+`PresentationStateMachine`/`AnimationController`/`{ expression,
+mouthOpenness, blinking }` contract wouldn't need to change either way.
 
 ## Project layout
 
@@ -498,7 +600,7 @@ src/
 │   ├── tts/              OmniVoiceClient, SentenceSegmenter (done)
 │   ├── playback/         PcmPlayer - ffplay-backed streaming playback (done)
 │   ├── SpeechController.ts  queue + interruption + speech state events (done)
-│   ├── stt/              .sprint — Sprint 8
+│   ├── stt/              .sprint — Sprint 8, see docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md
 │   └── interruption/     .sprint — Sprint 8 (voice-detected barge-in, needs STT;
 │                         typed-message barge-in already works, see SpeechController)
 ├── server.ts             WebSocket bridge for the browser front end - broadcasts
@@ -510,12 +612,20 @@ ui/                       React + TypeScript (Vite) browser front end (done)
 ├── src/presentation/     PresentationStateMachine, AnimationController, types (done)
 │                         - NB: presentation-layer code lives here, not under
 │                         src/presentation/, since it's inherently DOM/React-bound
-├── src/components/       Avatar.tsx (procedural SVG placeholder - see note above),
-│                         StatusPanel.tsx, ChatInput.tsx (done)
+├── src/components/       Avatar.tsx (real character art - see "Avatar art" note above),
+│                         StatusPanel.tsx, ChatInput.tsx, OverlaySettingsPanel.tsx (done)
+├── src/overlay/          useOverlay.ts, OverlaySettingsStore.ts, tauriEnv.ts - the
+│                         only place the frontend touches Tauri's window APIs (done)
 ├── src/ws/                useAymiAgent.ts - the only place the frontend talks
 │                         to the backend; every component just renders its output (done)
+├── src-tauri/            Tauri 2 desktop shell - transparent/borderless/always-on-top
+│                         window, Ctrl+Shift+A click-through toggle (done, see
+│                         "Running as a Desktop Avatar Overlay" above)
 └── src/App.tsx           avatar pane + status pane + chat input, per section 36's mockup (done)
 storage/                  SQLite database file lives here (gitignored)
+docs/specs/               reference specs for future phases (not yet implemented) -
+                          KIRA_VOICE_INTEGRATION_SPEC.md (Sprint 8: wake word, STT, VAD,
+                          voice profile, barge-in)
 ```
 
 > **Implementation note on `main.ts`'s `LineReader`:** Node's `readline`
@@ -540,8 +650,42 @@ storage/                  SQLite database file lives here (gitignored)
 - **Sprint 5 (remainder)** — metrics aggregation and full session replay
   from persisted trace events (section 27); the trace/DB groundwork is
   already there.
-- **Sprint 7 (remainder)** — resolve the avatar visual (see "Known open
-  decision" above) once a direction is picked; the pipeline it plugs into
-  is already built and verified.
+- **Sprint 7 (remainder)** — done: `Avatar.tsx` now swaps between 16
+  per-expression images sliced from `ui/src/assets/Expressoes.png`
+  (`expr-*.png`), including 4 mouth shapes cycled by TTS amplitude for real
+  viseme lip sync (`speakingFrame()`) and a dedicated blink pose
+  (`expr-piscando.png`) instead of a CSS filter. Still open: a scale
+  control in `OverlaySettingsPanel` (see "Running as a Desktop Avatar
+  Overlay" above).
+- **Sprint 8 (voice, per `docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md`)** —
+  "Primeira entrega" (section 25) is wired up: audited first (the existing
+  OmniVoice server is TTS-only, confirmed via its `/openapi.json` - no ASR
+  endpoints, so a separate STT engine is required per the spec's own
+  section 5 guidance). Discovered this machine's `ffmpeg` build has
+  `--enable-whisper`: its `whisper` audio filter does mic capture + VAD
+  (Silero) + whisper.cpp transcription in one persistent process, writing
+  one JSON segment per detected utterance - confirmed to flush in real
+  time, not just at process exit, which is what makes a live wake-word
+  pipeline possible without hand-rolling VAD or a subprocess-per-utterance.
+  `vendor/whisper.cpp`'s `ggml-base.bin` + `ggml-silero-v5.1.2.bin` models
+  are used by that filter (whisper.cpp itself isn't invoked directly -
+  ffmpeg links it in). New: `STTProvider`/`WhisperFfmpegSTT` (tails the
+  filter's JSON output), `VoiceProfile`/`KIRA_PROFILE`, `WakeWord.stripWakeWord()`
+  (section 7), and `VoiceRuntime` (section 9's state machine, including
+  TC-VOICE-002's "wake word alone -> wait for command"). Wired into
+  `server.ts` behind `AYMI_VOICE_INPUT=1` (off by default), forwarding
+  recognized commands into the exact same `handleInput()`/`runTurn()` path
+  as typed/WS text (section 12), and emitting `voice.state.changed` on the
+  EventBus, mapped to the avatar's presentation state in `useAymiAgent.ts`
+  (section 16). Smoke-tested: the pipeline starts/stops cleanly against
+  the real microphone (`AYMI_MIC_DEVICE` overrides the device name - see
+  `ffmpeg -list_devices true -f dshow -i dummy`). **Not yet verified**:
+  actual recognition accuracy on a real "Kira, abre o Chrome" utterance
+  (TC-VOICE-001) - that needs a human voice to test, which this session
+  couldn't do. Also not done: barge-in (section 15), telemetry fields
+  (section 19), a dedicated wake-word engine (still "Modo A" per section
+  8), and the `TTSProvider` abstraction (sections 3-4 - `SpeechController`
+  still calls `OmniVoiceClient` directly; low priority since
+  `AgentRuntime` already never imports voice/TTS code at all).
 - **Sprint 8** — STT + real voice-triggered barge-in (`voice/stt/`,
   `voice/interruption/`); typed-message barge-in already works today.

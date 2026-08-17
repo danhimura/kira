@@ -20,6 +20,7 @@ export type AgentEventName =
   | "speech.chunk"
   | "speech.finished"
   | "speech.interrupted"
+  | "voice.state.changed"
   | "avatar.state.changed"
   | "avatar.expression.changed"
   | "session.started"

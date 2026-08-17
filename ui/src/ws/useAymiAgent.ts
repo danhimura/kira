@@ -20,6 +20,23 @@ export interface PendingConfirmation {
 
 const WS_URL = `ws://${window.location.hostname}:8787/ws`;
 
+// Section 16 of docs/specs/KIRA_VOICE_INTEGRATION_SPEC.md - the voice
+// pipeline's own state machine is independent of the agent's, but both
+// drive the same avatar. Whichever fires last wins; once a command is
+// forwarded, agent.state.changed events follow almost immediately and
+// naturally take over.
+const VOICE_TO_PRESENTATION: Record<string, PresentationState> = {
+  VOICE_IDLE: "IDLE",
+  LISTENING_FOR_WAKE: "LISTENING",
+  WAKE_DETECTED: "LISTENING",
+  CAPTURING_COMMAND: "LISTENING",
+  TRANSCRIBING: "THINKING",
+  COMMAND_READY: "THINKING",
+  FORWARDING: "FOCUSED",
+  AUDIO_ERROR: "ERROR",
+  TIMEOUT: "IDLE",
+};
+
 /**
  * The only place this frontend talks to the backend. Everything else
  * (Avatar, StatusPanel, ChatInput) just renders whatever this hook exposes -
@@ -121,6 +138,12 @@ export function useAymiAgent() {
         case "speech.interrupted":
           anim.setSpeaking(false);
           break;
+        case "voice.state.changed": {
+          const { state } = event.data as { state: string };
+          const mapped = VOICE_TO_PRESENTATION[state];
+          if (mapped) anim.setBaseState(mapped);
+          break;
+        }
         default:
           break;
       }
