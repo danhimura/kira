@@ -2,6 +2,7 @@ import type { EventBus } from "../runtime/events/EventBus.js";
 import { OmniVoiceClient } from "./tts/OmniVoiceClient.js";
 import { PcmPlayer } from "./playback/PcmPlayer.js";
 import { segmentIntoSentences } from "./tts/SentenceSegmenter.js";
+import { computeRmsAmplitude16 } from "./tts/PcmAmplitude.js";
 
 export interface SpeechControllerOptions {
   baseUrl?: string;
@@ -83,11 +84,12 @@ export class SpeechController {
 
   private async speakSegment(text: string, signal: AbortSignal): Promise<void> {
     const stream = await this.client.synthesizeStream(text, { voice: this.voice }, signal);
-    const emitChunk = (bytes: number) => this.events.emit("speech.chunk", this.sessionId, { bytes });
+    const emitChunk = (bytes: number, amplitude: number) =>
+      this.events.emit("speech.chunk", this.sessionId, { bytes, amplitude });
 
     async function* tap(source: AsyncGenerator<Buffer>): AsyncGenerator<Buffer> {
       for await (const chunk of source) {
-        emitChunk(chunk.length);
+        emitChunk(chunk.length, computeRmsAmplitude16(chunk));
         yield chunk;
       }
     }

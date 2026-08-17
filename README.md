@@ -5,11 +5,11 @@ architecture in the project specification: **the LLM proposes, the runtime
 decides, the policy authorizes, the tool executes, the observation verifies,
 the evaluator judges the goal, and TTS/avatar communicate state.**
 
-This repo currently implements **Sprints 1–6** of the phased plan
+This repo currently implements **Sprints 1–7** of the phased plan
 (section 39 of the spec): a real `goal → plan → action → observation →
 evaluate → replan` loop, real authorization, a growing set of tools that
 actually act on the machine, an Evaluation Harness that grades the whole
-thing against the real runtime, and now a voice —
+thing against the real runtime, a voice, and now a visual front end —
 
 ```
 goal → action → observation → replan
@@ -23,12 +23,14 @@ Engine before it runs** (section 39's Sprint 3 goal), Sprint 4 adds real
 reversible/persistent tools behind that same gate — "agente executando
 tarefas reais" — Sprint 5 adds a real Evaluation Harness ("runtime
 mensurável") that runs cases against that exact runtime and grades every
-requirement independently, per section 29, and Sprint 6 wires in an existing
+requirement independently, per section 29, Sprint 6 wires in an existing
 local TTS engine with streaming, a speech queue, and interruption —
-"agente vocal." Everything else in the architecture (destructive tools,
-browser automation, avatar, STT/voice-triggered barge-in) is scaffolded as a
-stub folder with a `.sprint` file describing what belongs there and which
-sprint fills it in — see the folder tree below.
+"agente vocal" — and Sprint 7 adds a browser front end with a Presentation
+State Machine, an Animation Controller, and an animated 2D avatar reacting
+live to the same events — "agente visual." Everything else in the
+architecture (destructive tools, browser automation, STT/voice-triggered
+barge-in) is scaffolded as a stub folder with a `.sprint` file describing
+what belongs there and which sprint fills it in — see the folder tree below.
 
 ## Requirements
 
@@ -108,7 +110,23 @@ report per case plus a pass/fail summary; exits non-zero if any case
 failed. Takes a few minutes — one case deliberately forces a real tool
 timeout (see below) and every case is a handful of real LLM round-trips.
 
-## What Sprints 1–6 actually do
+### Running the browser front end (Sprint 7)
+
+Two processes, in separate terminals:
+
+```bash
+npm run server        # backend: WebSocket bridge on :8787, wraps the same AgentRuntime as the CLI
+cd ui && npm run dev   # frontend: Vite dev server on :5173
+```
+
+Open `http://localhost:5173`. The CLI (`npm run dev`) keeps working exactly
+as before and is unaffected - `server.ts` is just another presentation
+consumer of the same runtime, the same way `main.ts` is (section 4/45).
+Audio still plays on the host machine via `ffplay`/OmniVoice, same as the
+CLI; the browser never receives audio bytes, only the *events* (including
+PCM amplitude for lip sync).
+
+## What Sprints 1–7 actually do
 
 1. `SessionManager` creates a session (`session_id`) and, per user message, a
    turn (`turn_id`, `trace_id`, `parent_trace_id` linking back to the
@@ -228,6 +246,38 @@ timeout (see below) and every case is a handful of real LLM round-trips.
     queueing benefit this sprint delivers is at the TTS stage itself
     (segment *N+1* can be synthesizing while segment *N* plays) - it isn't
     chained all the way back to token-level LLM streaming.
+13. **The browser front end** (`src/server.ts` + `ui/`) is a second
+    presentation consumer of the exact same runtime, alongside the CLI -
+    it has no agent logic of its own (section 21: "o avatar não deve
+    consultar o Agent Runtime... ele recebe eventos"):
+    - `server.ts` is a thin WebSocket bridge: it broadcasts every `EventBus`
+      emission to connected browsers verbatim, and routes the browser's
+      `{type: "input"/"confirm"/"cancel"}` messages into the *same*
+      `runTurn()`/`confirm`/`InterruptManager` the CLI uses. The one
+      addition beyond the section 18 catalog is a `{type: "response"}`
+      message carrying the turn's final text - no EventBus event actually
+      carries that (`agent.goal.completed` is `{}`), so rather than stretch
+      the shared catalog for one consumer, the bridge sends it as its own
+      protocol detail.
+    - `ui/src/presentation/PresentationStateMachine.ts` (section 17) maps
+      `agent.state.changed` into 9 presentation states
+      (IDLE/LISTENING/THINKING/FOCUSED/SPEAKING/WAITING/SUCCESS/ERROR/SURPRISED),
+      independent of - and never querying - the Agent Runtime's own FSM.
+    - `ui/src/presentation/AnimationController.ts` (section 22) resolves
+      what to actually display: an independent "speaking" signal (from
+      `speech.*` events) and a "confirmation pending" signal (from
+      `confirmation.requested`) can override the base presentation state,
+      in priority order `ERROR > CONFIRMATION_REQUIRED > SPEAKING > (base
+      state)` - matching section 4's example of the agent being `EXECUTING`
+      while the presentation is `FOCUSED + SPEAKING` (FOCUSED is the base
+      state, SPEAKING is the overlay). It also owns idle animation (a
+      randomized blink timer) and lip sync (mouth openness driven by the
+      real RMS amplitude of each PCM chunk, computed in
+      `voice/tts/PcmAmplitude.ts` and threaded through `speech.chunk`).
+    - `ui/src/components/Avatar.tsx` is a procedural SVG "face" (no Live2D
+      model file exists for this project) that reads only
+      `{ expression, mouthOpenness, blinking }` and draws - it never touches
+      the WebSocket or the runtime's event shapes (section 21's contract).
 
 ### Built-in tools
 
@@ -360,6 +410,47 @@ with two genuine bugs found and fixed along the way (not worked around):
   OmniVoice server mid-session degraded gracefully to text-only with a
   one-time warning, no crash, turn processing unaffected.
 
+**Browser front end** - driven live through the Browser pane against the
+real backend (real Ollama, real tools, real OmniVoice), not a mock:
+`agent.state.changed` events correctly walked the avatar/status panel
+through `LISTENING → THINKING → FOCUSED → IDLE`; a `get_datetime` call
+showed `Tool: get_datetime — Status: COMPLETED` and the chat log rendered
+both the user's message and the assistant's reply; the avatar correctly
+showed the `speaking` expression during TTS playback (`AnimationController`
+overriding the base `idle` state, exactly the section 4 example); a
+confirmation-requiring tool correctly rendered the Sim/Não box with the
+avatar showing `waiting`, and — left deliberately unanswered — the turn
+correctly hit `max_execution_time` and failed cleanly rather than hanging
+forever, proving the limits from section 31 apply through this front end
+too, not just the CLI.
+
+Two real bugs surfaced and fixed while testing this, not papered over:
+- The very first response never reached the browser at all, even though
+  `EventBus` events were flowing fine. Cause: the backend process had been
+  started *before* the `broadcast({type:"response",...})` line was added to
+  `server.ts` - `tsx` doesn't hot-reload a plain script, so the running
+  process was still executing the old code. A stale long-running dev
+  process masquerading as "the code doesn't work" is exactly the kind of
+  thing worth calling out rather than silently restarting past.
+- `rl.question()`/`for await` isn't the only place synthetic browser
+  input caused confusion: pressing Return in the chat `<input>` didn't
+  submit the form during automated testing (a real user pressing Enter
+  works fine) - clicking the actual submit button was the reliable signal,
+  and is what the verification below relies on.
+
+**Known open decision, not yet resolved**: the spec's target is an anime
+character avatar overlay (Live2D or equivalent) - `Avatar.tsx` right now is
+a procedural SVG placeholder that proves the state → expression → render
+pipeline works, not the intended final visual. Producing original anime
+artwork isn't something this tooling can do; the options are (a) a real
+Live2D Cubism Web SDK integration using one of Live2D Inc.'s free official
+sample models as a placeholder, (b) the user supplying a real model file
+later (`.model3.json` + textures) for the same integration, or (c) a
+simpler static-sprite swap system if illustrated frames become available.
+Whichever is chosen, only `Avatar.tsx`'s internals change - `PresentationStateMachine`,
+`AnimationController`, and the `{ expression, mouthOpenness, blinking }`
+contract all stay the same.
+
 ## Project layout
 
 ```
@@ -410,10 +501,20 @@ src/
 │   ├── stt/              .sprint — Sprint 8
 │   └── interruption/     .sprint — Sprint 8 (voice-detected barge-in, needs STT;
 │                         typed-message barge-in already works, see SpeechController)
-├── presentation/         .sprint — Sprint 7 (avatar/animation)
+├── server.ts             WebSocket bridge for the browser front end - broadcasts
+│                         EventBus events, routes input/confirm/cancel into the
+│                         same AgentRuntime/runTurn() as main.ts (done)
 └── main.ts               CLI entrypoint wiring it all together (includes a
                            small LineReader - see note below)
-ui/                       .sprint — Sprint 7 (React frontend)
+ui/                       React + TypeScript (Vite) browser front end (done)
+├── src/presentation/     PresentationStateMachine, AnimationController, types (done)
+│                         - NB: presentation-layer code lives here, not under
+│                         src/presentation/, since it's inherently DOM/React-bound
+├── src/components/       Avatar.tsx (procedural SVG placeholder - see note above),
+│                         StatusPanel.tsx, ChatInput.tsx (done)
+├── src/ws/                useAymiAgent.ts - the only place the frontend talks
+│                         to the backend; every component just renders its output (done)
+└── src/App.tsx           avatar pane + status pane + chat input, per section 36's mockup (done)
 storage/                  SQLite database file lives here (gitignored)
 ```
 
@@ -439,7 +540,8 @@ storage/                  SQLite database file lives here (gitignored)
 - **Sprint 5 (remainder)** — metrics aggregation and full session replay
   from persisted trace events (section 27); the trace/DB groundwork is
   already there.
-- **Sprint 7** — avatar/animation (presentation state machine, section 17),
-  and a real UI (`ui/`) - right now the only front end is the CLI.
+- **Sprint 7 (remainder)** — resolve the avatar visual (see "Known open
+  decision" above) once a direction is picked; the pipeline it plugs into
+  is already built and verified.
 - **Sprint 8** — STT + real voice-triggered barge-in (`voice/stt/`,
   `voice/interruption/`); typed-message barge-in already works today.
