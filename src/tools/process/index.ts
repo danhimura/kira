@@ -15,10 +15,11 @@ interface ProcessInfo {
   memoryUsageKb: number;
 }
 
-async function listWindowsProcesses(): Promise<ProcessInfo[]> {
+async function listWindowsProcesses(signal: AbortSignal): Promise<ProcessInfo[]> {
   const { stdout } = await execFileAsync("tasklist", ["/fo", "csv", "/nh"], {
     windowsHide: true,
     maxBuffer: 4 * 1024 * 1024,
+    signal,
   });
 
   return stdout
@@ -53,8 +54,8 @@ const listProcesses: ToolDefinition<
   sideEffects: "none",
   confirmationPolicy: "none",
   environment: "windows",
-  async execute({ nameFilter }) {
-    const all = await listWindowsProcesses();
+  async execute({ nameFilter }, signal) {
+    const all = await listWindowsProcesses(signal);
     const filtered = nameFilter
       ? all.filter((p) => p.name.toLowerCase().includes(nameFilter.toLowerCase()))
       : all;

@@ -15,6 +15,8 @@ export interface Session {
   messages: ChatMessage[];
   /** Accumulated facts derived from observations (section 14 - StateDelta), persisted across turns in this session. */
   worldState: Record<string, unknown>;
+  /** Tool names the user has already confirmed once this session (section 9/32 - persistent-risk tools aren't re-prompted every call). */
+  approvedTools: Set<string>;
 }
 
 export interface Turn {
@@ -48,6 +50,7 @@ export class SessionManager {
       stateMachine: new AgentStateMachine(id, this.events),
       messages: [],
       worldState: {},
+      approvedTools: new Set(),
     };
 
     this.events.emit("session.started", id, { startedAt });

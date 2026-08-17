@@ -23,5 +23,6 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   sideEffects: SideEffects;
   confirmationPolicy: "none" | "required" | "risk_based";
   environment: "windows" | "cross-platform";
-  execute: (input: TInput) => Promise<TOutput>;
+  /** signal fires when the Interrupt Manager (section 32) cancels the turn; tools with cancellable: true should honor it where practical. */
+  execute: (input: TInput, signal: AbortSignal) => Promise<TOutput>;
 }

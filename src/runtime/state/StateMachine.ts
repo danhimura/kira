@@ -17,6 +17,9 @@ export type AgentState =
   | "CANCELLED"
   | "BLOCKED";
 
+// EXECUTING -> WAITING_CONFIRMATION (Sprint 3): the Policy Engine's decision
+// isn't known until the LLM actually proposes a specific tool call, so the
+// confirmation gate is per-call, not a single checkpoint before EXECUTING.
 const TRANSITIONS: Record<AgentState, AgentState[]> = {
   IDLE: ["LISTENING"],
   LISTENING: ["UNDERSTANDING", "CANCELLED"],
@@ -24,7 +27,7 @@ const TRANSITIONS: Record<AgentState, AgentState[]> = {
   PLANNING: ["POLICY_CHECK", "CANCELLED"],
   POLICY_CHECK: ["WAITING_CONFIRMATION", "EXECUTING", "BLOCKED", "CANCELLED"],
   WAITING_CONFIRMATION: ["EXECUTING", "CANCELLED"],
-  EXECUTING: ["OBSERVING", "FAILED", "CANCELLED"],
+  EXECUTING: ["OBSERVING", "FAILED", "CANCELLED", "WAITING_CONFIRMATION"],
   OBSERVING: ["EVALUATING", "CANCELLED"],
   EVALUATING: ["SUCCESS", "PLANNING", "LISTENING", "FAILED", "CANCELLED"],
   SUCCESS: ["IDLE"],

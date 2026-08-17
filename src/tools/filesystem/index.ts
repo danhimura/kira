@@ -27,14 +27,14 @@ const readFileTool: ToolDefinition<
   sideEffects: "none",
   confirmationPolicy: "none",
   environment: "cross-platform",
-  async execute({ path }) {
+  async execute({ path }, signal) {
     const absolutePath = resolve(path);
     const info = await stat(absolutePath);
     if (!info.isFile()) {
       throw new Error(`Not a file: ${absolutePath}`);
     }
 
-    const buffer = await readFile(absolutePath);
+    const buffer = await readFile(absolutePath, { signal });
     const truncated = buffer.byteLength > MAX_READ_BYTES;
     const content = buffer.subarray(0, MAX_READ_BYTES).toString("utf-8");
 
@@ -48,7 +48,16 @@ const searchFilesInput = z.object({
   maxDepth: z.number().int().min(0).max(10).optional(),
 });
 
-async function walk(dir: string, pattern: string, maxDepth: number, results: string[]): Promise<void> {
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+}
+
+async function walk(dir: string, pattern: string, maxDepth: number, results: string[], signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
   if (results.length >= MAX_SEARCH_RESULTS || maxDepth < 0) return;
 
   let entries;
@@ -59,12 +68,13 @@ async function walk(dir: string, pattern: string, maxDepth: number, results: str
   }
 
   for (const entry of entries) {
+    throwIfAborted(signal);
     if (results.length >= MAX_SEARCH_RESULTS) return;
     if (SEARCH_SKIP_DIRS.has(entry.name)) continue;
 
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      await walk(fullPath, pattern, maxDepth - 1, results);
+      await walk(fullPath, pattern, maxDepth - 1, results, signal);
     } else if (entry.name.toLowerCase().includes(pattern.toLowerCase())) {
       results.push(fullPath);
     }
@@ -87,10 +97,10 @@ const searchFilesTool: ToolDefinition<
   sideEffects: "none",
   confirmationPolicy: "none",
   environment: "cross-platform",
-  async execute({ directory, pattern, maxDepth }) {
+  async execute({ directory, pattern, maxDepth }, signal) {
     const absoluteDir = resolve(directory);
     const results: string[] = [];
-    await walk(absoluteDir, pattern, maxDepth ?? 6, results);
+    await walk(absoluteDir, pattern, maxDepth ?? 6, results, signal);
     return { count: results.length, truncated: results.length >= MAX_SEARCH_RESULTS, paths: results };
   },
 };
