@@ -11,8 +11,10 @@ export interface Session {
   stateMachine: AgentStateMachine;
   /** trace_id of the most recently finished turn, becomes parent_trace_id of the next one. */
   lastTraceId?: string;
-  /** In-memory chat history for this session (Sprint 1 - Conversation Manager stub). */
+  /** In-memory chat history for this session, owned by ConversationManager. */
   messages: ChatMessage[];
+  /** Accumulated facts derived from observations (section 14 - StateDelta), persisted across turns in this session. */
+  worldState: Record<string, unknown>;
 }
 
 export interface Turn {
@@ -45,6 +47,7 @@ export class SessionManager {
       startedAt,
       stateMachine: new AgentStateMachine(id, this.events),
       messages: [],
+      worldState: {},
     };
 
     this.events.emit("session.started", id, { startedAt });
@@ -80,7 +83,7 @@ export class SessionManager {
     session: Session,
     turn: Turn,
     outputText: string | undefined,
-    finalStatus: "SUCCESS" | "FAILED" | "CANCELLED" | "BLOCKED"
+    finalStatus: "SUCCESS" | "FAILED" | "CANCELLED" | "BLOCKED" | "ASK_USER"
   ): void {
     getDb()
       .prepare(
