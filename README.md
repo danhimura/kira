@@ -5,11 +5,11 @@ architecture in the project specification: **the LLM proposes, the runtime
 decides, the policy authorizes, the tool executes, the observation verifies,
 the evaluator judges the goal, and TTS/avatar communicate state.**
 
-This repo currently implements **Sprints 1–5** of the phased plan
+This repo currently implements **Sprints 1–6** of the phased plan
 (section 39 of the spec): a real `goal → plan → action → observation →
 evaluate → replan` loop, real authorization, a growing set of tools that
-actually act on the machine, and an Evaluation Harness that grades the
-whole thing against the real runtime —
+actually act on the machine, an Evaluation Harness that grades the whole
+thing against the real runtime, and now a voice —
 
 ```
 goal → action → observation → replan
@@ -21,12 +21,14 @@ Engine, Interrupt Manager, Event Bus, and a persisted Trace. **The LLM has no
 direct authority: every tool call is judged by the deterministic Policy
 Engine before it runs** (section 39's Sprint 3 goal), Sprint 4 adds real
 reversible/persistent tools behind that same gate — "agente executando
-tarefas reais" — and Sprint 5 adds a real Evaluation Harness ("runtime
+tarefas reais" — Sprint 5 adds a real Evaluation Harness ("runtime
 mensurável") that runs cases against that exact runtime and grades every
-requirement independently, per section 29. Everything else in the
-architecture (destructive tools, browser automation, voice, avatar) is
-scaffolded as a stub folder with a `.sprint` file describing what belongs
-there and which sprint fills it in — see the folder tree below.
+requirement independently, per section 29, and Sprint 6 wires in an existing
+local TTS engine with streaming, a speech queue, and interruption —
+"agente vocal." Everything else in the architecture (destructive tools,
+browser automation, avatar, STT/voice-triggered barge-in) is scaffolded as a
+stub folder with a `.sprint` file describing what belongs there and which
+sprint fills it in — see the folder tree below.
 
 ## Requirements
 
@@ -57,10 +59,42 @@ Environment variables (optional):
   `search_files`/`list_processes` call can return hundreds of entries.
 - `AYMI_DEBUG_TRACE=1` — print the section-26-style trace after each turn.
 - `AYMI_DEBUG_EVENTS=1` — print every event bus emission as it happens.
+- `AYMI_VOICE=0` — disable voice output entirely (text-only).
+- `OMNIVOICE_BASE_URL` — defaults to `http://localhost:8765` (see Voice below).
+- `OMNIVOICE_VOICE` — defaults to `"auto"`; see `GET /v1/voices` on the
+  OmniVoice server for presets (`alloy`, `ash`, ...) or `design:<attributes>`.
 
 Type "sair" or "exit" to end the session. **Ctrl+C** cancels whatever turn
-is currently running (soft cancel); a second Ctrl+C (or one with nothing
-running) exits the program (hard stop).
+is currently running (soft cancel, and stops any ongoing speech); a second
+Ctrl+C (or one with nothing running) exits the program (hard stop).
+
+### Voice (Sprint 6)
+
+The agent speaks its responses using **OmniVoice**
+([k2-fsa/OmniVoice](https://huggingface.co/k2-fsa/OmniVoice)), an existing
+local TTS setup found running in this machine's WSL Ubuntu distro (an
+OpenAI-compatible `/v1/audio/speech` HTTP server, `omnivoice-server`, in a
+venv at `~/omnivoice-env`). Start it before running `npm run dev`:
+
+```bash
+wsl -d Ubuntu-24.04
+source ~/omnivoice-env/bin/activate
+omnivoice-server --host 0.0.0.0 --port 8765 --device cuda   # or --device cpu
+```
+
+Reachable from Windows at `http://localhost:8765` via WSL2's automatic
+localhost forwarding — no extra networking setup needed. `ffplay`/`ffmpeg`
+must also be on the Windows `PATH` (used for real-time PCM playback).
+
+**GPU note**: this machine's GPU (RTX 4070, 12GB) is tight when both Ollama
+(the 30B-A3B model) and OmniVoice run on CUDA simultaneously - it was
+observed pushing VRAM to ~11.6/12.3GB and destabilizing Ollama (slow
+responses, occasional container restarts). `--device cpu` for OmniVoice is
+slower per utterance (~2s synthesis for a short sentence vs sub-second on
+GPU) but avoids fighting Ollama for VRAM - reasonable default if both run
+on the same box. If voice is not needed, `AYMI_VOICE=0` skips it entirely;
+if the server isn't reachable at all, aymi degrades gracefully to text-only
+with a one-time console warning rather than breaking the turn loop.
 
 ### Running the Evaluation Harness
 
@@ -74,7 +108,7 @@ report per case plus a pass/fail summary; exits non-zero if any case
 failed. Takes a few minutes — one case deliberately forces a real tool
 timeout (see below) and every case is a handful of real LLM round-trips.
 
-## What Sprints 1–5 actually do
+## What Sprints 1–6 actually do
 
 1. `SessionManager` creates a session (`session_id`) and, per user message, a
    turn (`turn_id`, `trace_id`, `parent_trace_id` linking back to the
@@ -159,6 +193,41 @@ timeout (see below) and every case is a handful of real LLM round-trips.
     independently as `PASS`/`FAIL`/`NOT_APPLICABLE` (section 29). **A case
     is `FAIL` if any applicable requirement fails — a correct final
     response reached via a wrong trajectory is not a correct execution.**
+12. **`SpeechController`** (section 19/32, `src/voice/`) sits entirely
+    outside the Agent Runtime — `main.ts` calls `speech.speak(result.finalMessage)`
+    *after* `runTurn()` resolves, so the Evaluation Harness (which calls
+    `runTurn()` directly) never produces audio. The pipeline:
+    - `SentenceSegmenter` splits the response into sentence-sized segments,
+      so the first one can start playing while later ones are still queued.
+    - `OmniVoiceClient` requests each segment with `response_format: "pcm"`
+      and `stream: true` - the *only* combination the server actually
+      streams (container formats like `wav` need a known total length
+      up front, so the server rejects `stream:true` for anything but raw
+      PCM) - and returns the sample rate/channels/bit depth read from
+      response headers alongside an async generator of raw PCM chunks.
+    - `PcmPlayer` feeds those chunks into `ffplay`'s stdin as they arrive,
+      so audio starts well before the whole utterance is synthesized
+      (observed: first PCM byte at ~0.2s into a request that takes ~2s to
+      fully complete).
+    - `stop()` aborts the in-flight request and kills `ffplay` immediately.
+      **Section 20's barge-in**, adapted for a text-only front end (no STT
+      yet - see `voice/interruption/.sprint`, Sprint 8): submitting a new
+      message while the agent is still speaking calls `stop()` before the
+      next turn starts, the same way detected user speech would.
+    - Speech states (`speech.started` / `speech.chunk` / `speech.finished`
+      / `speech.interrupted`, section 18) are emitted on the same `EventBus`
+      as everything else, visible via `AYMI_DEBUG_EVENTS=1`.
+    - Voice degrades gracefully: a fetch failure (server not running) is
+      caught, logged once, and the text CLI keeps working normally.
+
+    **Honest scoping note**: section 19's pipeline starts from a *streamed*
+    LLM response. `OllamaProvider` currently calls Ollama with
+    `stream: false` (simpler tool-call detection against a complete
+    response), so segmentation operates on the final response text once a
+    turn resolves, not on incrementally arriving tokens. The real streaming/
+    queueing benefit this sprint delivers is at the TTS stage itself
+    (segment *N+1* can be synthesizing while segment *N* plays) - it isn't
+    chained all the way back to token-level LLM streaming.
 
 ### Built-in tools
 
@@ -268,6 +337,29 @@ nonexistent-file case originally required `read_file` specifically, but the
 model reasonably checked via `search_files` first — a legitimate strategy,
 not a bug, so the case now accepts either tool.
 
+**Voice pipeline** — verified end to end against the real OmniVoice server,
+with two genuine bugs found and fixed along the way (not worked around):
+- `ffplay.stdin.write()` had no `'error'` listener, so a closed pipe (e.g.
+  `ffplay` exiting while still being fed audio) was an *unhandled* `'error'`
+  event that crashed the whole Node process. Fixed with a listener that
+  converts it into "stop feeding this stream", which the write loop's own
+  `destroyed`/`exitCode` checks already handled correctly.
+- The installed `ffplay` build rejects `-ac <n>` outright
+  (`Failed to set value '1' for option 'ac': Option not found` - recent
+  FFmpeg builds want `-ch_layout mono`/`stereo` instead of a bare channel
+  count). Without this, every `play()` call returned in under 100ms having
+  played nothing - a silent failure that would have been easy to miss
+  without directly checking `ffplay`'s own stderr.
+
+  Confirmed working after both fixes: a 2-second synthetic tone played for
+  the correct ~2.2s (not 74ms); a real turn's response streamed in 4 chunks
+  and finished cleanly (`speech.started` → `speech.chunk` × 4 →
+  `speech.finished`); typing a second message while the first response was
+  still speaking correctly interrupted it (`speech.interrupted` fired
+  *before* the second turn's tool call, not after); and stopping the
+  OmniVoice server mid-session degraded gracefully to text-only with a
+  one-time warning, no crash, turn processing unaffected.
+
 ## Project layout
 
 ```
@@ -311,7 +403,13 @@ src/
 │   ├── tracing/          Trace (done, now also records STATE_CHANGED)
 │   ├── metrics/          .sprint — aggregated metrics beyond the raw trace
 │   └── replay/           .sprint — full session reconstruction from persisted trace events
-├── voice/                .sprint — Sprints 6/8 (TTS/STT/barge-in)
+├── voice/
+│   ├── tts/              OmniVoiceClient, SentenceSegmenter (done)
+│   ├── playback/         PcmPlayer - ffplay-backed streaming playback (done)
+│   ├── SpeechController.ts  queue + interruption + speech state events (done)
+│   ├── stt/              .sprint — Sprint 8
+│   └── interruption/     .sprint — Sprint 8 (voice-detected barge-in, needs STT;
+│                         typed-message barge-in already works, see SpeechController)
 ├── presentation/         .sprint — Sprint 7 (avatar/animation)
 └── main.ts               CLI entrypoint wiring it all together (includes a
                            small LineReader - see note below)
@@ -341,4 +439,7 @@ storage/                  SQLite database file lives here (gitignored)
 - **Sprint 5 (remainder)** — metrics aggregation and full session replay
   from persisted trace events (section 27); the trace/DB groundwork is
   already there.
-- **Sprint 6** — integrate the existing local TTS.
+- **Sprint 7** — avatar/animation (presentation state machine, section 17),
+  and a real UI (`ui/`) - right now the only front end is the CLI.
+- **Sprint 8** — STT + real voice-triggered barge-in (`voice/stt/`,
+  `voice/interruption/`); typed-message barge-in already works today.

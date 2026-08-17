@@ -3,9 +3,13 @@ import { DEFAULT_LIMITS } from "./runtime/session/Limits.js";
 import { ToolExecutor } from "./runtime/executor/ToolExecutor.js";
 import { InterruptManager } from "./runtime/interrupt/InterruptManager.js";
 import { createAgentRuntime, runTurn, type Confirm } from "./runtime/AgentRuntime.js";
+import { SpeechController } from "./voice/SpeechController.js";
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3:30b-a3b-instruct-2507-q4_K_M";
+const VOICE_ENABLED = process.env.AYMI_VOICE !== "0";
+const OMNIVOICE_BASE_URL = process.env.OMNIVOICE_BASE_URL ?? "http://localhost:8765";
+const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "auto";
 
 const runtime = createAgentRuntime({ ollamaHost: OLLAMA_HOST, ollamaModel: OLLAMA_MODEL });
 
@@ -68,17 +72,28 @@ class LineReader {
 }
 
 async function main(): Promise<void> {
-  console.log("aymi - Agent Runtime (Sprint 5)");
+  console.log("aymi - Agent Runtime (Sprint 6)");
   console.log(`Modelo: ${OLLAMA_MODEL} @ ${OLLAMA_HOST}`);
   console.log(`Ferramentas registradas: ${runtime.registry.list().map((t) => t.name).join(", ")}`);
+  console.log(
+    VOICE_ENABLED
+      ? `Voz: OmniVoice @ ${OMNIVOICE_BASE_URL} (voice="${OMNIVOICE_VOICE}") - AYMI_VOICE=0 para desativar`
+      : "Voz: desativada (AYMI_VOICE=0)"
+  );
   console.log('Digite sua mensagem (ou "sair" para encerrar). Ctrl+C cancela a operação atual; Ctrl+C de novo encerra o programa.\n');
 
   const session = runtime.sessions.createSession();
   const executor = new ToolExecutor(runtime.registry, runtime.events, session.id);
+  const speech = new SpeechController(runtime.events, session.id, {
+    enabled: VOICE_ENABLED,
+    baseUrl: OMNIVOICE_BASE_URL,
+    voice: OMNIVOICE_VOICE,
+  });
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const lineReader = new LineReader(rl);
 
   const shutdown = () => {
+    speech.stop();
     runtime.sessions.closeSession(session);
     try {
       rl.close();
@@ -90,12 +105,14 @@ async function main(): Promise<void> {
     process.exitCode = 0;
   };
 
-  // Section 32 - first Ctrl+C is a soft cancel of whatever turn is running;
-  // a second Ctrl+C (or one with nothing running) is a hard stop.
+  // Section 32 - first Ctrl+C is a soft cancel of whatever turn is running
+  // (and stops any ongoing speech); a second Ctrl+C (or one with nothing
+  // running) is a hard stop.
   let activeInterrupt: InterruptManager | undefined;
   process.on("SIGINT", () => {
     if (activeInterrupt && !activeInterrupt.isCancelRequested()) {
       activeInterrupt.requestCancel();
+      speech.stop();
       console.log("\n[cancelamento solicitado - Ctrl+C novamente para encerrar o programa]");
     } else {
       shutdown();
@@ -121,10 +138,19 @@ async function main(): Promise<void> {
     if (!input) continue;
     if (input.toLowerCase() === "sair" || input.toLowerCase() === "exit") break;
 
+    // Section 20 barge-in, adapted for a text-only front end: submitting a
+    // new message while the agent is still speaking interrupts it, the same
+    // way detected user speech would. Real voice-triggered barge-in needs
+    // STT (Sprint 8) - see voice/interruption/.sprint.
+    if (speech.isSpeaking()) speech.stop();
+
     const interrupt = new InterruptManager();
     activeInterrupt = interrupt;
-    await runTurn(runtime, session, executor, input, DEFAULT_LIMITS, interrupt, confirm);
+    const result = await runTurn(runtime, session, executor, input, DEFAULT_LIMITS, interrupt, confirm);
     activeInterrupt = undefined;
+
+    // Fire-and-forget: don't block the next prompt on speech finishing.
+    void speech.speak(result.finalMessage);
   }
 
   shutdown();
