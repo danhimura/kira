@@ -3,7 +3,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { DEFAULT_LIMITS } from "./runtime/session/Limits.js";
 import { ToolExecutor } from "./runtime/executor/ToolExecutor.js";
 import { InterruptManager } from "./runtime/interrupt/InterruptManager.js";
-import { createAgentRuntime, runTurn, type Confirm } from "./runtime/AgentRuntime.js";
+import { createAgentRuntime, runTurn, describeLlmProvider, type Confirm } from "./runtime/AgentRuntime.js";
 import { SpeechController } from "./voice/SpeechController.js";
 import { VoiceRuntime } from "./voice/VoiceRuntime.js";
 import { WhisperFfmpegSTT } from "./voice/stt/WhisperFfmpegSTT.js";
@@ -11,7 +11,7 @@ import { KIRA_PROFILE } from "./voice/profiles/VoiceProfile.js";
 
 const PORT = Number(process.env.AYMI_SERVER_PORT ?? 8787);
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3:30b-a3b-instruct-2507-q4_K_M";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "gemma4:e4b";
 const VOICE_ENABLED = process.env.AYMI_VOICE !== "0";
 const OMNIVOICE_BASE_URL = process.env.OMNIVOICE_BASE_URL ?? "http://localhost:8765";
 const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "auto";
@@ -152,7 +152,7 @@ wss.on("connection", (ws) => {
 
 httpServer.listen(PORT, () => {
   console.log(`aymi server (Sprint 7) listening on http://localhost:${PORT} (WebSocket at /ws)`);
-  console.log(`Modelo: ${OLLAMA_MODEL} @ ${OLLAMA_HOST}`);
+  console.log(`Modelo: ${describeLlmProvider(OLLAMA_MODEL, OLLAMA_HOST)}`);
   console.log(`Ferramentas registradas: ${runtime.registry.list().map((t) => t.name).join(", ")}`);
   if (voiceRuntime) {
     console.log(`Voz (entrada): ativada - diga "${KIRA_PROFILE.wakeWord}, <comando>" (AYMI_VOICE_INPUT=1)`);

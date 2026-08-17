@@ -2,11 +2,11 @@ import { createInterface } from "node:readline";
 import { DEFAULT_LIMITS } from "./runtime/session/Limits.js";
 import { ToolExecutor } from "./runtime/executor/ToolExecutor.js";
 import { InterruptManager } from "./runtime/interrupt/InterruptManager.js";
-import { createAgentRuntime, runTurn, type Confirm } from "./runtime/AgentRuntime.js";
+import { createAgentRuntime, runTurn, describeLlmProvider, type Confirm } from "./runtime/AgentRuntime.js";
 import { SpeechController } from "./voice/SpeechController.js";
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3:30b-a3b-instruct-2507-q4_K_M";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "gemma4:e4b";
 const VOICE_ENABLED = process.env.AYMI_VOICE !== "0";
 const OMNIVOICE_BASE_URL = process.env.OMNIVOICE_BASE_URL ?? "http://localhost:8765";
 const OMNIVOICE_VOICE = process.env.OMNIVOICE_VOICE ?? "auto";
@@ -73,7 +73,7 @@ class LineReader {
 
 async function main(): Promise<void> {
   console.log("aymi - Agent Runtime (Sprint 6)");
-  console.log(`Modelo: ${OLLAMA_MODEL} @ ${OLLAMA_HOST}`);
+  console.log(`Modelo: ${describeLlmProvider(OLLAMA_MODEL, OLLAMA_HOST)}`);
   console.log(`Ferramentas registradas: ${runtime.registry.list().map((t) => t.name).join(", ")}`);
   console.log(
     VOICE_ENABLED

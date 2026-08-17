@@ -50,6 +50,7 @@ export class OllamaProvider implements LLMProvider {
       body: JSON.stringify({
         model: this.model,
         stream: false,
+        think: false,
         options: { num_ctx: this.numCtx },
         messages: messages.map((m) => ({
           role: m.role,

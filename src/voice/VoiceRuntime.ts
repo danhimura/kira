@@ -74,7 +74,7 @@ export class VoiceRuntime {
       this.captureTimeout = setTimeout(() => {
         this.setState("TIMEOUT");
         this.setState("LISTENING_FOR_WAKE");
-      }, this.opts.captureCommandTimeoutMs ?? 6000);
+      }, this.opts.captureCommandTimeoutMs ?? 15000);
     }
   }
 

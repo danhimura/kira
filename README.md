@@ -37,8 +37,8 @@ what belongs there and which sprint fills it in — see the folder tree below.
 - Node.js >= 22.5 (uses the built-in `node:sqlite` module — no native
   dependency to compile)
 - [Ollama](https://ollama.com) running locally with a tool-calling-capable
-  model pulled (default: `qwen3:30b-a3b-instruct-2507-q4_K_M`, the model
-  named in the spec's section 37)
+  model pulled (default: `gemma4:e4b`) - or an API-based provider instead,
+  see below.
 
 ## Running
 
@@ -46,6 +46,48 @@ what belongs there and which sprint fills it in — see the folder tree below.
 npm install
 npm run dev
 ```
+
+### LLM provider (local Ollama, or DeepSeek/Groq via API)
+
+`OllamaProvider` and `OpenAICompatibleProvider` both implement the same
+`LLMProvider` interface (section 7's R7 - substitutable), so
+`AgentRuntime.createAgentRuntime()` picks one at startup based on
+`LLM_PROVIDER`, and nothing else in the runtime knows or cares which:
+
+```bash
+LLM_PROVIDER=          # unset/anything else - local Ollama (default)
+LLM_PROVIDER=deepseek  # needs DEEPSEEK_API_KEY
+LLM_PROVIDER=groq      # needs GROQ_API_KEY
+```
+
+Put these in a `.env` file at the repo root (gitignored, loaded
+automatically via `--env-file-if-exists` on the `dev`/`server`/`eval`
+scripts) rather than exporting them by hand:
+
+```
+LLM_PROVIDER=groq
+GROQ_API_KEY=...
+DEEPSEEK_API_KEY=...
+```
+
+**Why this exists**: this session ran into the local Ollama model being
+either too large to fit comfortably in memory alongside the Tauri overlay
++ WSL/OmniVoice + whisper.cpp all running at once (`qwen3:30b-a3b-
+instruct-2507-q4_K_M`, ~18.6GB), or - once switched to a lighter model
+(`gemma4:e4b`, ~9.6GB, confirmed fully offloaded to GPU) - each full agent
+turn (intent → plan → execute → evaluate is 4+ sequential LLM calls, see
+"What Sprints 1–7 actually do" below) taking well over the 60s execution
+limit, because that model's verbose chain-of-thought ran on every single
+call. Two real fixes came out of this:
+1. `OllamaProvider` now always sends `think: false` - cut a single
+   tool-call round-trip from ~24s to ~4s in testing.
+2. `LLM_PROVIDER=groq` bypasses local inference limits entirely - Groq's
+   hardware answered the same real tool-call request in ~0.4s total,
+   dramatically faster than anything tested locally. Trade-off: this sends
+   the user's input to a third-party API and needs internet, which is a
+   real departure from the project's original "everything local" premise
+   (local TTS, local STT) - a deliberate, explicit opt-in via
+   `LLM_PROVIDER`, not the default.
 
 Environment variables (optional):
 
@@ -536,6 +578,23 @@ Two real bugs surfaced and fixed while testing this, not papered over:
   submit the form during automated testing (a real user pressing Enter
   works fine) - clicking the actual submit button was the reliable signal,
   and is what the verification below relies on.
+
+A third, more serious bug surfaced later (Sprint 8 voice testing, when an
+Ollama request failed with an out-of-memory error mid-turn): `runTurn()`
+only reset `AgentStateMachine` back to `IDLE` along its normal
+SUCCESS/FAILED/ASK_USER/CANCELLED paths - a thrown exception from
+anywhere in between (an LLM/tool infra failure, not a normal FAILED
+verdict) left the state machine stuck wherever it was interrupted (e.g.
+`UNDERSTANDING`), so the *next* turn on that session failed immediately
+with `InvalidTransitionError: UNDERSTANDING -> UNDERSTANDING` - the
+session was permanently broken until process restart. Fixed by wrapping
+the whole turn body in `runTurn()` in a try/catch: every non-terminal
+state can reach `CANCELLED`, and every terminal state can reach `IDLE`
+(see `TRANSITIONS` in `StateMachine.ts`), so the catch block always has a
+valid path back to `IDLE` regardless of exactly where the throw happened,
+and returns a normal `FAILED` `TurnResult` instead of propagating the
+exception. This is shared by the CLI, the WS bridge, and the eval harness
+alike, since they all call the same `runTurn()`.
 
 **Avatar art (partially resolved)**: the user supplied real character
 artwork (`ui/src/assets/modelo_base.png`), replacing the procedural SVG

@@ -7,6 +7,8 @@ import { ToolExecutor, type ToolResult } from "./executor/ToolExecutor.js";
 import type { ToolDefinition } from "../tools/registry/ToolDefinition.js";
 import type { Trace } from "../telemetry/tracing/Trace.js";
 import { OllamaProvider } from "../llm/ollama/OllamaProvider.js";
+import { OpenAICompatibleProvider } from "../llm/openaiCompatible/OpenAICompatibleProvider.js";
+import type { LLMProvider } from "../llm/provider/LLMProvider.js";
 import { SYSTEM_PROMPT } from "../llm/prompts/system.js";
 import { IntentProcessor } from "./intent/IntentProcessor.js";
 import { Planner } from "./planner/Planner.js";
@@ -37,7 +39,7 @@ export interface AgentRuntimeDeps {
   events: EventBus;
   sessions: SessionManager;
   registry: ToolRegistry;
-  llm: OllamaProvider;
+  llm: LLMProvider;
   intentProcessor: IntentProcessor;
   planner: Planner;
   observationManager: ObservationManager;
@@ -46,13 +48,52 @@ export interface AgentRuntimeDeps {
   policyEngine: PolicyEngine;
 }
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+
+/** Cosmetic only - what main.ts/server.ts print at startup so it's obvious which provider is actually live. */
+export function describeLlmProvider(ollamaModel: string, ollamaHost: string): string {
+  switch (process.env.LLM_PROVIDER) {
+    case "deepseek":
+      return `DeepSeek (${process.env.DEEPSEEK_MODEL ?? "deepseek-chat"}) via API`;
+    case "groq":
+      return `Groq (${process.env.GROQ_MODEL ?? "openai/gpt-oss-120b"}) via API`;
+    default:
+      return `${ollamaModel} @ ${ollamaHost}`;
+  }
+}
+
+function createLlmProvider(local: { ollamaHost: string; ollamaModel: string; ollamaNumCtx?: number }): LLMProvider {
+  switch (process.env.LLM_PROVIDER) {
+    case "deepseek":
+      return new OpenAICompatibleProvider({
+        apiKey: requireEnv("DEEPSEEK_API_KEY"),
+        model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+        baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+        label: "DeepSeek",
+      });
+    case "groq":
+      return new OpenAICompatibleProvider({
+        apiKey: requireEnv("GROQ_API_KEY"),
+        model: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
+        baseUrl: process.env.GROQ_BASE_URL ?? "https://api.groq.com/openai/v1",
+        label: "Groq",
+      });
+    default:
+      return new OllamaProvider({ host: local.ollamaHost, model: local.ollamaModel, numCtx: local.ollamaNumCtx });
+  }
+}
+
 export function createAgentRuntime(options?: {
   ollamaHost?: string;
   ollamaModel?: string;
   ollamaNumCtx?: number;
 }): AgentRuntimeDeps {
   const ollamaHost = options?.ollamaHost ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
-  const ollamaModel = options?.ollamaModel ?? process.env.OLLAMA_MODEL ?? "qwen3:30b-a3b-instruct-2507-q4_K_M";
+  const ollamaModel = options?.ollamaModel ?? process.env.OLLAMA_MODEL ?? "gemma4:e4b";
   const ollamaNumCtx = options?.ollamaNumCtx ?? (process.env.OLLAMA_NUM_CTX ? Number(process.env.OLLAMA_NUM_CTX) : undefined);
 
   const events = new EventBus();
@@ -60,7 +101,11 @@ export function createAgentRuntime(options?: {
   const registry = new ToolRegistry();
   registerBuiltinTools(registry);
 
-  const llm = new OllamaProvider({ host: ollamaHost, model: ollamaModel, numCtx: ollamaNumCtx });
+  // R7 substitutable: LLM_PROVIDER=deepseek|groq swaps the whole runtime onto
+  // an API-based model instead of local Ollama, useful for comparing speed
+  // when the local machine is memory/GPU-constrained. Defaults to Ollama -
+  // no behavior change unless explicitly opted in.
+  const llm: LLMProvider = createLlmProvider({ ollamaHost, ollamaModel, ollamaNumCtx });
 
   return {
     events,
@@ -131,6 +176,35 @@ export async function runTurn(
   const sm = session.stateMachine;
   const startedAt = Date.now();
 
+  try {
+    return await runTurnBody();
+  } catch (err) {
+    // A throw anywhere below (LLM/tool infra failure - not a normal FAILED
+    // verdict, which is handled inline) must not leave the state machine
+    // stuck wherever it was interrupted, or every subsequent turn on this
+    // session fails immediately with InvalidTransitionError. Every
+    // non-terminal state can reach CANCELLED, and every terminal state can
+    // reach IDLE, so this recovers regardless of exactly where the throw
+    // happened.
+    if (sm.current !== "IDLE") {
+      if (!sm.isTerminal()) sm.transition("CANCELLED");
+      sm.transition("IDLE");
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    turn.trace.record("RUNTIME_ERROR", { message });
+    events.emit("agent.goal.failed", session.id, { reason: "RUNTIME_ERROR" }, { turnId: turn.id, traceId: turn.traceId });
+    sessions.finishTurn(session, turn, message, "FAILED");
+    return {
+      outcome: "FAILED",
+      finalMessage: `Erro inesperado: ${message}`,
+      turnId: turn.id,
+      traceId: turn.traceId,
+      observations: [],
+      trace: turn.trace,
+    };
+  }
+
+  async function runTurnBody(): Promise<TurnResult> {
   // A pending ASK_USER from a previous turn leaves the FSM in LISTENING
   // already (section 16 - LISTENING is not terminal); only transition into
   // it from IDLE for a fresh turn.
@@ -386,4 +460,5 @@ export async function runTurn(
     observations,
     trace: turn.trace,
   };
+  }
 }
