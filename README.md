@@ -289,6 +289,49 @@ you want those to actually complete instead of hanging.
   `src/voice/input/WakeWord.ts`, `src/voice/VoiceRuntime.ts` (the section 9
   state machine), wired into `server.ts` behind `AYMI_VOICE_INPUT`.
 
+### Controlling Kira remotely via MCP (e.g. from a phone)
+
+`src/mcp-server.ts` exposes Kira over the Model Context Protocol, so any
+MCP-capable client on the same network - a phone running the Claude app,
+Claude Desktop, etc. - can talk to her, the same way a browser tab or the
+CLI already does.
+
+```bash
+npm run mcp   # needs AYMI_MCP_TOKEN set in .env - refuses to start without it
+```
+
+- **One tool only: `ask_kira(message)`.** It does *not* expose aymi's
+  individual OS tools (`open_application`, `write_file`, ...) directly as
+  MCP tools - a connected client calling those straight would bypass the
+  Policy Engine entirely. `ask_kira` routes everything through the exact
+  same `runTurn()` used by the CLI/WS bridge/voice, so every existing
+  safety property (risk-based confirmation, the deterministic Policy
+  Engine, tracing) applies exactly as it already does today - this is just
+  one more presentation consumer of the same runtime.
+- **Confirmation over MCP** uses the protocol's `elicitation/create`
+  request: when a tool call needs approval, the server asks the *connected
+  client* to collect a yes/no from the human (via `Confirm`'s existing
+  `elicitInput` call), instead of hanging forever like a confirmation
+  requested over voice/WS with nothing there to answer it. If the client
+  doesn't support elicitation (or the request fails), it degrades to a
+  safe deny rather than hanging.
+- **Auth**: every request needs `Authorization: Bearer <AYMI_MCP_TOKEN>` -
+  being on the same LAN isn't access control by itself, and some of these
+  tools have real side effects (this was flagged as a real risk while
+  designing this, not an afterthought).
+- **Session handling**: Streamable HTTP transport, following the SDK's own
+  reference session-management pattern (one transport per `mcp-session-id`,
+  reused across requests - the first naive version recreated a transport
+  per HTTP request and broke after `initialize`).
+- Verified live: a raw MCP `initialize` → `notifications/initialized` →
+  `tools/call` sequence against `ask_kira` returned a correct answer
+  through the real Groq-backed pipeline. Confirmation-requiring commands
+  (the elicitation round-trip) still need a real interactive MCP client to
+  fully verify - not something a plain HTTP request can drive end to end.
+- To connect: point the client at `http://<this machine's LAN IP>:8790/`
+  with that bearer token. Exact steps depend on the client (Claude.ai's
+  Connectors, Claude Desktop's MCP config, etc.).
+
 ## What Sprints 1–7 actually do
 
 1. `SessionManager` creates a session (`session_id`) and, per user message, a

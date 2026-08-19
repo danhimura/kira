@@ -12,9 +12,11 @@
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file-if-exists=.env dist/main.js",
     "eval": "tsx --env-file-if-exists=.env src/evaluation/run.ts",
-    "server": "tsx --env-file-if-exists=.env src/server.ts"
+    "server": "tsx --env-file-if-exists=.env src/server.ts",
+    "mcp": "tsx --env-file-if-exists=.env src/mcp-server.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "uuid": "^11.0.0",
     "ws": "^8.21.3",
     "zod": "^3.24.0"
